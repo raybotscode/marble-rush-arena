@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useRapier } from '@react-three/rapier';
 import { useGameStore, MARBLE_COLORS, type MarbleColor } from '../store/gameStore';
+import { updateMarblePosition as updateSharedPos, updateLeader as updateSharedLeader } from '../marbleTracking';
 
 const COURSE_START_Z = -12;
 const COURSE_FINISH_Z = 15;
@@ -111,33 +112,21 @@ export function RaceManager() {
       shuffled.forEach((color, idx) => {
         // Each marble gets its own unique sub-seed from the race seed
         const marbleSeed = ((seed * (idx + 1) * 7919) & 0x7fffffff) / 2147483647;
-        const staggerMs = idx * 20 + Math.floor(marbleSeed * 100); // 20-120ms stagger
+        const staggerMs = idx * 5 + Math.floor(marbleSeed * 20); // 5-25ms stagger
         
         setTimeout(() => {
           if (isDisposed.current) return;
           const body = marbleBodies.current.get(color);
           if (!body) return;
 
-          // Wide impulse variation for true chaos:
-          // X: strong left-right (-0.9 to +0.9)
-          // Z: big forward speed variation (1.2 to 4.0)
-          // Y: slight lift or downward
-          const xImpulse = (marbleSeed - 0.5) * 1.8;
-          const zImpulse = 1.2 + marbleSeed * 2.8;
-          const yImpulse = -0.05 - marbleSeed * 0.3;
+          // Equal push — enough momentum to carry through the whole course
+          // Gravity + slopes maintain speed. Low damping keeps them rolling.
+          const zImpulse = 0.1;                           // light push
+          const xImpulse = 0.0;                           // dead straight start
+          const yImpulse = 0.0;                           // gravity handles vertical
 
           body.applyImpulse(
             { x: xImpulse, y: yImpulse, z: zImpulse },
-            true
-          );
-
-          // Random torque for spin-based chaos
-          body.applyTorqueImpulse(
-            {
-              x: (marbleSeed - 0.5) * 0.6,
-              y: (marbleSeed - 0.5) * 0.6,
-              z: (marbleSeed - 0.5) * 0.6,
-            },
             true
           );
         }, staggerMs);
@@ -181,8 +170,9 @@ export function RaceManager() {
         const t = body.translation();
         if (!t) return;
 
-        // Store actual 3D world position in the store
+        // Store actual 3D world position in the store AND shared ref
         setMarbleActualPos(color as MarbleColor, { x: t.x, y: t.y, z: t.z });
+        updateSharedPos(color as MarbleColor, t.x, t.y, t.z);
 
         // Track leader based on actual Z position
         if (t.z > bestZ) {
@@ -220,6 +210,7 @@ export function RaceManager() {
 
     if (bestColor) {
       setLeaderColor(bestColor as MarbleColor);
+      updateSharedLeader(bestColor as MarbleColor);
     }
 
     // End race

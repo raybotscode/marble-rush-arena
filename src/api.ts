@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_BASE = import.meta.env.VITE_API_URL || 'https://marble-rush-arena-worker.raybotsemail.workers.dev/api';
 
 async function fetchAPI(path: string, options: RequestInit = {}) {
   const token = localStorage.getItem('mra_token');

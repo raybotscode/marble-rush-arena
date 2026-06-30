@@ -2,141 +2,134 @@ import { useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore, MARBLE_COLORS } from '../store/gameStore';
+import { marblePositions } from '../marbleTracking';
 
 /**
- * Camera that follows the actual 3D world positions of marbles.
- * Reads real physics body positions from the Zustand store (set by RaceManager).
- * Works in three modes: lobby orbit, racing follow, results zoom-in.
+ * TRACKING CAMERA
+ * Reads marble positions from a shared mutable ref (no Zustand timing lag).
+ * Smoothly follows the leader marble through the entire course.
+ * Uses a single continuous offset function — no zone switching, no hard snaps.
  */
 export function CameraController() {
   const { camera } = useThree();
   const phase = useGameStore((s) => s.phase);
-  const marbleActualPositions = useGameStore((s) => s.marbleActualPositions);
-  const leaderColor = useGameStore((s) => s.leaderColor);
   const raceResult = useGameStore((s) => s.raceResult);
 
-  // Smooth camera state
   const smoothPos = useRef(new THREE.Vector3(0, 8, -2));
   const smoothLook = useRef(new THREE.Vector3(0, 2, 0));
   const lobbyAngle = useRef(0);
+  const currentProgress = useRef(0);
 
   useFrame((_state, delta) => {
     const dt = Math.min(delta, 0.06);
 
-    // ===== LOBBY: slow orbit showing the full course =====
+    // --- LOBBY ---
     if (phase === 'lobby') {
-      lobbyAngle.current += 0.15 * dt;
-      const r = 10;
-      const h = 5.5 + Math.sin(lobbyAngle.current * 0.5) * 1.5;
-      smoothPos.current.set(
-        Math.sin(lobbyAngle.current) * r,
-        h,
-        Math.cos(lobbyAngle.current) * r - 2
-      );
-      smoothLook.current.set(0, 1.5, 0);
-
+      lobbyAngle.current += 0.12 * dt;
+      const r = 14;
+      const h = 7 + Math.sin(lobbyAngle.current * 0.5) * 1.5;
+      smoothPos.current.set(Math.sin(lobbyAngle.current) * r, h, Math.cos(lobbyAngle.current) * r - 3);
+      smoothLook.current.set(0, 3, 0);
       camera.position.copy(smoothPos.current);
       camera.lookAt(smoothLook.current);
+      currentProgress.current = 0;
       return;
     }
 
-    // ===== COUNTDOWN: lock onto the start gate =====
+    // --- COUNTDOWN ---
     if (phase === 'countdown') {
-      const targetPos = new THREE.Vector3(0, 3.8, -8);
-      const targetLook = new THREE.Vector3(0, 3.5, -11);
-
-      smoothPos.current.lerp(targetPos, 0.08);
-      smoothLook.current.lerp(targetLook, 0.1);
+      // Establish shot — show the start area with all marbles
+      smoothPos.current.lerp(new THREE.Vector3(0, 5, -9), 0.04);
+      smoothLook.current.lerp(new THREE.Vector3(0, 4.8, -11), 0.04);
       camera.position.copy(smoothPos.current);
       camera.lookAt(smoothLook.current);
       return;
     }
 
-    // ===== RACING: follow the leader's actual 3D position =====
+    // --- RACING ---
     if (phase === 'racing') {
-      // Find the leading marble by actual Z position
-      let leadPos: { x: number; y: number; z: number } | null = null;
+      // Find leader: scan all positions from the shared mutable ref (always current)
       let bestZ = -Infinity;
+      let leadPos = { x: 0, y: 0, z: 0 };
 
-      MARBLE_COLORS.forEach((color) => {
-        const p = marbleActualPositions[color];
+      // Scan all marbles from the shared tracking ref (direct mutation, no React lag)
+      for (const c of MARBLE_COLORS) {
+        const p = marblePositions[c];
         if (p && p.z > bestZ) {
           bestZ = p.z;
           leadPos = p;
         }
-      });
-
-      // Fallback: use leaderColor from store if no pos found
-      if (!leadPos && leaderColor) {
-        leadPos = marbleActualPositions[leaderColor];
       }
 
-      // If we have a leader position, follow it
-      if (leadPos && leadPos.z !== 0) {
-        // Camera hovers above and BEHIND the leader
-        const camTarget = new THREE.Vector3(leadPos.x, leadPos.y, leadPos.z);
-
-        // Offset: behind (-Z) and above (+Y)
-        const behind = 2.0; // how far behind the marble
-        const above = 2.0;  // how high above
-
-        // The camera position is above+behind the marble
-        const camPos = new THREE.Vector3(
-          leadPos.x * 0.4,  // slight X offset for side-angle
-          leadPos.y + above,
-          leadPos.z - behind
-        );
-
-        // In the funnel/bowl area, zoom out wider
-        const inFunnel = leadPos.z > -3 && leadPos.z < 6 && leadPos.y < 2;
-        if (inFunnel) {
-          camPos.set(2.5, 4.0, 3.0);
-          camTarget.set(0, 0.5, 4.0);
-        }
-
-        // On the final speed straight, pull back more to show race finish
-        if (leadPos.z > 10) {
-          camPos.set(leadPos.x * 0.3, leadPos.y + 3.5, leadPos.z - 4);
-        }
-
-        // Smooth follow (faster lerp = more responsive)
-        smoothPos.current.lerp(camPos, 0.06);
-        smoothLook.current.lerp(camTarget, 0.08);
-
-        camera.position.copy(smoothPos.current);
-        camera.lookAt(smoothLook.current);
-      } else {
-        // No marble positions yet — stay at a wide view of the course
-        const fallback = new THREE.Vector3(0, 6, -5);
-        const fallbackLook = new THREE.Vector3(0, 2, 0);
-        smoothPos.current.lerp(fallback, 0.05);
-        smoothLook.current.lerp(fallbackLook, 0.05);
-        camera.position.copy(smoothPos.current);
-        camera.lookAt(smoothLook.current);
+      // Fallback: if nothing found yet, use a fixed early-track position
+      // so the camera is pointing at the right area before marbles start moving
+      if (bestZ === -Infinity) {
+        leadPos = { x: 0, y: 5.0, z: -11.5 };
+        bestZ = -11.5;
       }
+
+      // Shared ref already updated by RaceManager every frame
+
+      // Calculate how far through the course the leader is
+      // Start: z=-12, Finish: z=16  → total course length ~28 units
+      const z = leadPos.z;
+      const progress = Math.max(0, Math.min(1, (z + 12) / 28));
+      currentProgress.current = progress;
+
+      // === SINGLE CONTINUOUS CAMERA OFFSET FUNCTION ===
+      // No if/else zones, no switching — just maths based on progress
+
+      // HEIGHT above the marble:
+      // High at start (8) → low during bowl/funnel (3) → rises at finish (6)
+      const height = 8 - progress * 7 + Math.sin(progress * Math.PI * 0.8) * 2;
+
+      // SIDE OFFSET: slightly to the right at start, left at mid, centred at end
+      const sideOffset = Math.sin(progress * Math.PI * 1.3) * 1.5;
+
+      // BEHIND/AHEAD: behind at start (z+4), transitions to ahead at ~70% course
+      const behindAhead = progress < 0.65
+        ? 4 - progress * 2
+        : 4 - 0.65 * 2 - (progress - 0.65) * 12;
+
+      // Compute target camera position
+      const targetPos = new THREE.Vector3(
+        leadPos.x + sideOffset,
+        leadPos.y + height,
+        z + behindAhead
+      );
+
+      // Look target: slightly ahead and above the lead marble
+      const lookAhead = 1 + progress * 2;
+      const targetLook = new THREE.Vector3(
+        leadPos.x,
+        leadPos.y + 0.5,
+        z + lookAhead
+      );
+
+      // Smooth follow — faster tracking at high speeds, slower for smoothness
+      const lerpAlpha = Math.min(1, (3 + progress * 2) * dt);
+      smoothPos.current.lerp(targetPos, lerpAlpha);
+      smoothLook.current.lerp(targetLook, lerpAlpha * 0.8);
+
+      camera.position.copy(smoothPos.current);
+      camera.lookAt(smoothLook.current);
       return;
     }
 
-    // ===== RESULTS: zoom in on the winning marble =====
+    // --- RESULTS ---
     if (phase === 'results') {
       const winner = raceResult?.winner;
       if (winner) {
-        const winPos = marbleActualPositions[winner];
-        if (winPos && winPos.z !== 0) {
-          const camTarget = new THREE.Vector3(winPos.x, winPos.y + 0.3, winPos.z);
-          const camPos = new THREE.Vector3(
-            winPos.x + 0.3,
-            winPos.y + 0.8,
-            winPos.z - 1.5
-          );
-
-          smoothPos.current.lerp(camPos, 0.05);
-          smoothLook.current.lerp(camTarget, 0.06);
+        const pos = marblePositions[winner];
+        if (pos && pos.z !== 0) {
+          const target = new THREE.Vector3(pos.x, pos.y + 0.3, pos.z);
+          const camPos = new THREE.Vector3(pos.x + 0.5, pos.y + 1.2, pos.z - 3);
+          smoothPos.current.lerp(camPos, 0.03);
+          smoothLook.current.lerp(target, 0.04);
           camera.position.copy(smoothPos.current);
           camera.lookAt(smoothLook.current);
         }
       }
-      return;
     }
   });
 

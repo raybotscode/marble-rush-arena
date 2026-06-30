@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS admin_settings (
 
 -- Seed default admin settings
 INSERT OR IGNORE INTO admin_settings (key, value) VALUES
-  ('countdown_duration', '30'),
-  ('race_reset_delay', '15'),
+  ('countdown_duration', '3'),
+  ('race_reset_delay', '5'),
   ('win_multiplier', '1'),
   ('auto_racing_enabled', 'true'),
   ('race_duration_target', '75'),

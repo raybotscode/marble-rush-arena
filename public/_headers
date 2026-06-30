@@ -1,0 +1,9 @@
+# Prevent browser caching of JS/CSS for development
+/assets/*
+  Cache-Control: no-cache, no-store, must-revalidate
+
+# Allow caching images/fonts
+/assets/*.png
+  Cache-Control: public, max-age=86400
+/assets/*.svg
+  Cache-Control: public, max-age=86400
