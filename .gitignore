@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+*.local
+wrangler.toml
+worker/wrangler.toml
+.DS_Store
+*.tsbuildinfo
